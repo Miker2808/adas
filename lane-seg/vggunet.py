@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
 from torchvision import models
-from torchvision.models import VGG16_Weights
+from torchvision.models import VGG16_BN_Weights
 
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -25,15 +25,15 @@ class VGG_UNET(nn.Module):
     ):
         super(VGG_UNET, self).__init__()
 
-        weights = VGG16_Weights.DEFAULT if pretrained else None
-        vgg = models.vgg16(weights=weights)
+        weights = VGG16_BN_Weights.DEFAULT if pretrained else None
+        vgg = models.vgg16_bn(weights=weights)
 
-        # encoder is pretrained VGG
-        self.encoder1 = vgg.features[:4]   # [64, 64, maxpool]
-        self.encoder2 = vgg.features[4:9]  # [128, 128, maxpool]
-        self.encoder3 = vgg.features[9:16] # [256, 256, maxpool]
-        self.encoder4 = vgg.features[16:23] # [512, 512, maxpool]
-        self.encoder5 = vgg.features[23:30] # [512, 512, maxpool]
+        # encoder is pretrained VGG with batch norm
+        self.encoder1 = vgg.features[:6]   # [64, BN, ReLU, 64, BN, ReLU, maxpool]
+        self.encoder2 = vgg.features[6:13]  # [128, BN, ReLU, 128, BN, ReLU, maxpool]
+        self.encoder3 = vgg.features[13:23] # [256, BN, ReLU, 256, BN, ReLU, 256, BN, ReLU, maxpool]
+        self.encoder4 = vgg.features[23:33] # [512, BN, ReLU, 512, BN, ReLU, 512, BN, ReLU, maxpool]
+        self.encoder5 = vgg.features[33:43] # [512, BN, ReLU, 512, BN, ReLU, 512, BN, ReLU, maxpool]
 
         self.ups = nn.ModuleList()
 

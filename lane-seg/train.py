@@ -31,6 +31,26 @@ TRAIN_VAL_SPLIT = 0.8  # 80% train, 20% validation
 IMAGE_DIR = "dataset/TUSimpleProcessed/images/"
 MASK_DIR = "dataset/TUSimpleProcessed/masks/"
 
+class CombinedLoss(nn.Module):
+    def __init__(self, alpha=0.7):
+        super().__init__()
+        self.alpha = alpha
+        self.bce = nn.BCEWithLogitsLoss()
+    
+    def dice_loss(self, pred, target):
+        smooth = 1e-5
+        pred = torch.sigmoid(pred)
+        intersection = (pred * target).sum(dim=(2, 3))
+        union = pred.sum(dim=(2, 3)) + target.sum(dim=(2, 3))
+        dice = (2. * intersection + smooth) / (union + smooth)
+        return 1 - dice.mean()
+    
+    def forward(self, pred, target):
+        bce = self.bce(pred, target)
+        dice = self.dice_loss(pred, target)
+        return self.alpha * bce + (1 - self.alpha) * dice
+
+
 def train_fn(loader, model, optimizer, loss_fn, scaler):
     loop = tqdm(loader)
 
@@ -39,7 +59,7 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
         targets = targets.float().unsqueeze(1).to(device=DEVICE)
 
         # forward
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast(DEVICE):
             predictions = model(data)
             loss = loss_fn(predictions, targets)
 
@@ -56,15 +76,14 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
 def main():
     train_transform = A.Compose(
         [
-            A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
-            A.Rotate(limit=35, p=1.0),
+            A.Resize(height=240, width=320),
             A.HorizontalFlip(p=0.5),
-            A.VerticalFlip(p=0.1),
-            A.Normalize(
-                mean=(0.0, 0.0, 0.0),
-                std=(1.0, 1.0, 1.0),
-                max_pixel_value=255.0,
-            ),
+            A.RandomBrightnessContrast(p=0.3),
+            A.GaussNoise(p=0.2),
+            A.MotionBlur(blur_limit=3, p=0.2),
+            A.Perspective(scale=(0.05, 0.1), p=0.3),  # Simulates different camera angles
+            A.CoarseDropout(max_holes=8, max_height=20, max_width=20, p=0.2),
+            A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),
             ToTensorV2()
         ]
     )
@@ -125,7 +144,7 @@ def main():
         load_checkpoint(torch.load("my_checkpoint.pth.tar"), model)
 
     check_accuracy(val_loader, model, device=DEVICE)
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     for epoch in range(NUM_EPOCHS):
         train_fn(train_loader, model, optimizer, loss_fn, scaler)
@@ -135,7 +154,7 @@ def main():
             "state_dict": model.state_dict(),
             "optimizer": optimizer.state_dict(),
         }
-        save_checkpoint(checkpoint)
+        save_checkpoint(checkpoint, filename="vgg_unet_bn.pth.tar")
 
         # check accuracy
         check_accuracy(val_loader, model, device=DEVICE)

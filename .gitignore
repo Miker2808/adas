@@ -2,4 +2,5 @@ dataset/**
 dataset**
 .venv/**
 **.pth**
+samples**
 saved_images
