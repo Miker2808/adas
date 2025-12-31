@@ -7,7 +7,7 @@ from vggunet import VGG_UNET
 
 # Configuration
 VIDEO_PATH = "samples/v1.mp4"
-CHECKPOINT_PATH = "vgg_unet_bn.pth.tar"
+CHECKPOINT_PATH = "model/vgg_unet_bn.pth.tar"
 
 class LaneSegmentationVisualizer:
     def __init__(self):
@@ -36,7 +36,7 @@ class LaneSegmentationVisualizer:
         # Get prediction
         with torch.no_grad():
             pred = torch.sigmoid(self.model(img_tensor))
-            pred = (pred > 0.9).float()
+            pred = (pred > 0.99).float()
         
         # Convert to mask
         mask = pred.squeeze().cpu().numpy()

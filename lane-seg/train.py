@@ -13,42 +13,33 @@ from utils import (
     save_checkpoint,
     check_accuracy,
     save_predictions_as_imgs,
+    get_val_loss,
+    EarlyStopping,
+    CombinedLoss
 )
 
 # Hyperparameters etc.
 LEARNING_RATE = 1e-4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 16
-NUM_EPOCHS = 5
+NUM_EPOCHS = 50
 NUM_WORKERS = 4
 IMAGE_HEIGHT = 16*15
 IMAGE_WIDTH = 16*20
 PIN_MEMORY = True
-LOAD_MODEL = False
-TRAIN_VAL_SPLIT = 0.8  # 80% train, 20% validation
+LOAD_MODEL = True
+TRAIN_VAL_SPLIT = 0.85
+EARLY_STOPPING_PATIENCE = 10
+MIN_DELTA = 0.001
+DICE_BCE_ALPHA = 0.6
+
+MODEL_PATH = "model/vgg_unet_bn.pth.tar"
+SAVE_PREDICTIONS = False
 
 # Single dataset directories
 IMAGE_DIR = "dataset/TUSimpleProcessed/images/"
 MASK_DIR = "dataset/TUSimpleProcessed/masks/"
 
-class CombinedLoss(nn.Module):
-    def __init__(self, alpha=0.7):
-        super().__init__()
-        self.alpha = alpha
-        self.bce = nn.BCEWithLogitsLoss()
-    
-    def dice_loss(self, pred, target):
-        smooth = 1e-5
-        pred = torch.sigmoid(pred)
-        intersection = (pred * target).sum(dim=(2, 3))
-        union = pred.sum(dim=(2, 3)) + target.sum(dim=(2, 3))
-        dice = (2. * intersection + smooth) / (union + smooth)
-        return 1 - dice.mean()
-    
-    def forward(self, pred, target):
-        bce = self.bce(pred, target)
-        dice = self.dice_loss(pred, target)
-        return self.alpha * bce + (1 - self.alpha) * dice
 
 
 def train_fn(loader, model, optimizer, loss_fn, scaler):
@@ -66,9 +57,10 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
         # backward
         optimizer.zero_grad()
         scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)  # Unscale before clipping
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # Add gradient clipping
         scaler.step(optimizer)
         scaler.update()
-
         # update tqdm loop
         loop.set_postfix(loss=loss.item())
 
@@ -81,8 +73,14 @@ def main():
             A.RandomBrightnessContrast(p=0.3),
             A.GaussNoise(p=0.2),
             A.MotionBlur(blur_limit=3, p=0.2),
-            A.Perspective(scale=(0.05, 0.1), p=0.3),  # Simulates different camera angles
-            A.CoarseDropout(max_holes=8, max_height=20, max_width=20, p=0.2),
+            A.Perspective(scale=(0.05, 0.1), p=0.3),
+            A.CoarseDropout(
+                num_holes_range=(4, 8),
+                hole_height_range=(10, 20),
+                hole_width_range=(10, 20),
+                fill_value=0,
+                p=0.2
+            ),
             A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),
             ToTensorV2()
         ]
@@ -137,31 +135,75 @@ def main():
     )
 
     model = VGG_UNET(in_channels=3, out_channels=1).to(DEVICE)
-    loss_fn = nn.BCEWithLogitsLoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    loss_fn = CombinedLoss(alpha=DICE_BCE_ALPHA)
+    optimizer = optim.AdamW(
+        model.parameters(), 
+        lr=LEARNING_RATE, 
+        weight_decay=1e-4,
+        betas=(0.9, 0.999)
+    )
+
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='min',
+        factor=0.5,
+        patience=5,
+        min_lr=1e-6,
+    )
+
+    early_stopping = EarlyStopping(
+        patience=EARLY_STOPPING_PATIENCE,
+        min_delta=MIN_DELTA
+    )
 
     if LOAD_MODEL:
-        load_checkpoint(torch.load("my_checkpoint.pth.tar"), model)
+        load_checkpoint(torch.load(MODEL_PATH), model)
 
+    print(f"Initial validation accuracy:")
     check_accuracy(val_loader, model, device=DEVICE)
     scaler = torch.amp.GradScaler('cuda')
 
     for epoch in range(NUM_EPOCHS):
+        print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")
         train_fn(train_loader, model, optimizer, loss_fn, scaler)
 
-        # save model
+        # Get validation loss for scheduler and early stopping
+        val_loss = get_val_loss(val_loader, model, loss_fn, DEVICE)
+        print(f"Validation Loss: {val_loss:.5f}")
+        
+        # Update learning rate
+        scheduler.step(val_loss)
+        
+        check_accuracy(val_loader, model, device=DEVICE)
+        
+        # Check early stopping
+        if early_stopping(val_loss, model):
+            print(f"\nEarly stopping triggered at epoch {epoch+1}")
+            # Load best model
+            model.load_state_dict(early_stopping.best_model_state)
+            break
+
+        # Save model checkpoint
         checkpoint = {
             "state_dict": model.state_dict(),
             "optimizer": optimizer.state_dict(),
+            "epoch": epoch,
+            "val_loss": val_loss,
         }
-        save_checkpoint(checkpoint, filename="vgg_unet_bn.pth.tar")
+        save_checkpoint(checkpoint, filename=MODEL_PATH)
 
-        # check accuracy
-        check_accuracy(val_loader, model, device=DEVICE)
+        # Save predictions every 5 epochs
+        if (epoch + 1) % 5 == 0 and SAVE_PREDICTIONS:
+            save_predictions_as_imgs(
+                val_loader, model, folder=f"saved_images/epoch_{epoch+1}/", device=DEVICE
+            )
 
-        # print some examples to a folder
+    # Final evaluation and save
+    print("\nFinal validation accuracy:")
+    check_accuracy(val_loader, model, device=DEVICE)
+    if SAVE_PREDICTIONS:
         save_predictions_as_imgs(
-            val_loader, model, folder="saved_images/", device=DEVICE
+            val_loader, model, folder="saved_images/final/", device=DEVICE
         )
 
 

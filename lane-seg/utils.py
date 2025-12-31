@@ -1,8 +1,75 @@
 import os
 import torch
 import torchvision
+import torch.nn as nn
 from dataset import TUSimpleDataset
 from torch.utils.data import DataLoader
+
+class EarlyStopping:
+    def __init__(self, patience=10, min_delta=0.001):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+        self.best_model_state = None
+    
+    def __call__(self, val_loss, model):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+            self.best_model_state = model.state_dict()
+        elif val_loss > self.best_loss - self.min_delta:
+            self.counter += 1
+            print(f"EarlyStopping counter: {self.counter}/{self.patience}")
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            print(f"Validation loss improved: {self.best_loss:.5f} -> {val_loss:.5f}")
+            self.best_loss = val_loss
+            self.best_model_state = model.state_dict()
+            self.counter = 0
+        return self.early_stop
+    
+class CombinedLoss(nn.Module):
+    def __init__(self, alpha=0.7):
+        super().__init__()
+        self.alpha = alpha
+        self.bce = nn.BCEWithLogitsLoss()
+    
+    def dice_loss(self, pred, target):
+        smooth = 1e-5
+        pred = torch.sigmoid(pred)
+        intersection = (pred * target).sum(dim=(2, 3))
+        union = pred.sum(dim=(2, 3)) + target.sum(dim=(2, 3))
+        dice = (2. * intersection + smooth) / (union + smooth)
+        return 1 - dice.mean()
+    
+    def forward(self, pred, target):
+        bce = self.bce(pred, target)
+        dice = self.dice_loss(pred, target)
+        return self.alpha * bce + (1 - self.alpha) * dice
+
+
+def get_val_loss(loader, model, loss_fn, device):
+    """Calculate validation loss"""
+    model.eval()
+    total_loss = 0
+    num_batches = 0
+    
+    with torch.no_grad():
+        for data, targets in loader:
+            data = data.to(device=device)
+            targets = targets.float().unsqueeze(1).to(device=device)
+            
+            with torch.amp.autocast(device):
+                predictions = model(data)
+                loss = loss_fn(predictions, targets)
+            
+            total_loss += loss.item()
+            num_batches += 1
+    
+    model.train()
+    return total_loss / num_batches
 
 def save_checkpoint(state, filename="model_checkpoint.pth.tar"):
     print("=> Saving checkpoint")
