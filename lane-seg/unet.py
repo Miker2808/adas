@@ -71,3 +71,4 @@ if __name__ == "__main__":
     model = UNET(in_channels=1, out_channels=1)
     preds = model(x)
     assert preds.shape == x.shape
+    print(torch.cuda.is_available())

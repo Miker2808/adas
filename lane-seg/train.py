@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from unet import UNET
+from vggunet import VGG_UNET
 from dataset import TUSimpleDataset
 from utils import (
     load_checkpoint,
@@ -116,7 +117,7 @@ def main():
         shuffle=False,
     )
 
-    model = UNET(in_channels=3, out_channels=1).to(DEVICE)
+    model = VGG_UNET(in_channels=3, out_channels=1).to(DEVICE)
     loss_fn = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
