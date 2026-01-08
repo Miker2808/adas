@@ -1,5 +1,5 @@
-dataset/**
-dataset**
+dataset/
+**/__pycache__/**
 .venv/**
 **.pth**
 samples**
