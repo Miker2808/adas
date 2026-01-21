@@ -3,16 +3,16 @@ import torch
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import numpy as np
-from vggunet import VGG_UNET
+from models.resnet_unet import RESNET18_UNET
 
 # Configuration
-VIDEO_PATH = "samples/v1.mp4"
-CHECKPOINT_PATH = "model/vgg_unet_bn.pth.tar"
+VIDEO_PATH = "sample1.mp4"
+CHECKPOINT_PATH = "weights/residual_unet_weights.pth.tar"
 
 class LaneSegmentationVisualizer:
     def __init__(self):
         # Load model
-        self.model = VGG_UNET(in_channels=3, out_channels=1).to("cuda")
+        self.model = RESNET18_UNET(in_channels=3, out_channels=1).to("cuda")
         checkpoint = torch.load(CHECKPOINT_PATH)
         self.model.load_state_dict(checkpoint["state_dict"])
         self.model.eval()
@@ -36,7 +36,7 @@ class LaneSegmentationVisualizer:
         # Get prediction
         with torch.no_grad():
             pred = torch.sigmoid(self.model(img_tensor))
-            pred = (pred > 0.99).float()
+            pred = (pred >= 1.0).float()
         
         # Convert to mask
         mask = pred.squeeze().cpu().numpy()
@@ -52,8 +52,6 @@ class LaneSegmentationVisualizer:
     
     def run(self):
         cap = cv2.VideoCapture(VIDEO_PATH)
-        cv2.namedWindow('Lane Segmentation', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Lane Segmentation', 1280, 480)
         
         while True:
             ret, frame = cap.read()

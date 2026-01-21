@@ -5,8 +5,8 @@ from tqdm import tqdm
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from unet import UNET
-from vggunet import VGG_UNET
+from models.resnet_unet import RESNET18_UNET
+from models.vggunet import VGG_UNET
 from dataset import TUSimpleDataset
 from utils import (
     load_checkpoint,
@@ -27,18 +27,18 @@ NUM_WORKERS = 4
 IMAGE_HEIGHT = 16*15
 IMAGE_WIDTH = 16*20
 PIN_MEMORY = True
-LOAD_MODEL = True
+LOAD_MODEL = False
 TRAIN_VAL_SPLIT = 0.85
 EARLY_STOPPING_PATIENCE = 10
 MIN_DELTA = 0.001
 DICE_BCE_ALPHA = 0.6
 
-MODEL_PATH = "model/vgg_unet_bn.pth.tar"
+MODEL_PATH = "weights/residual_unet_weights.pth.tar"
 SAVE_PREDICTIONS = False
 
 # Single dataset directories
-IMAGE_DIR = "dataset/TUSimpleProcessed/images/"
-MASK_DIR = "dataset/TUSimpleProcessed/masks/"
+IMAGE_DIR = "dataset/images/"
+MASK_DIR = "dataset/masks/"
 
 
 
@@ -50,7 +50,7 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
         targets = targets.float().unsqueeze(1).to(device=DEVICE)
 
         # forward
-        with torch.amp.autocast(DEVICE):
+        with torch.amp.autocast(DEVICE): # type: ignore
             predictions = model(data)
             loss = loss_fn(predictions, targets)
 
@@ -68,21 +68,73 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
 def main():
     train_transform = A.Compose(
         [
+            # Resize
             A.Resize(height=240, width=320),
+
+            # Geometry
             A.HorizontalFlip(p=0.5),
-            A.RandomBrightnessContrast(p=0.3),
-            A.GaussNoise(p=0.2),
-            A.MotionBlur(blur_limit=3, p=0.2),
-            A.Perspective(scale=(0.05, 0.1), p=0.3),
+            A.Affine(
+                translate_percent=(-0.05, 0.05),
+                scale=(0.9, 1.1),
+                rotate=(-15, 15),
+                p=0.5,
+            ),
+            A.Perspective(
+                scale=(0.05, 0.1),
+                p=0.3,
+            ),
+
+            # Color / lighting
+            A.ColorJitter(
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.1,
+                p=0.4,
+            ),
+
+            A.RandomBrightnessContrast(
+                brightness_limit=0.2,
+                contrast_limit=0.2,
+                p=0.2,
+            ),
+
+            # Weather
+            A.RandomFog(
+                fog_coef_range=(0.1, 0.3),
+                alpha_coef=0.1,
+                p=0.2,
+            ),
+            A.RandomRain(
+                slant_range=(-10, 10),
+                drop_length=10,
+                drop_width=1,
+                p=0.2,
+            ),
+
+            # Noise
+            A.GaussNoise(
+                std_range=(0.02, 0.05),
+                mean_range=(0.0, 0.0),
+                per_channel=True,
+                noise_scale_factor=1.0,
+                p=0.5
+            ),
+
+            # Occlusion
             A.CoarseDropout(
                 num_holes_range=(4, 8),
                 hole_height_range=(10, 20),
                 hole_width_range=(10, 20),
-                fill_value=0,
-                p=0.2
+                p=0.2,
             ),
-            A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),
-            ToTensorV2()
+            
+            # Normalization
+            A.Normalize(
+                mean=(0.485, 0.456, 0.406),
+                std=(0.229, 0.224, 0.225)
+            ),
+            ToTensorV2(),
         ]
     )
 
@@ -134,7 +186,7 @@ def main():
         shuffle=False,
     )
 
-    model = VGG_UNET(in_channels=3, out_channels=1).to(DEVICE)
+    model = RESNET18_UNET(in_channels=3, out_channels=1).to(DEVICE)
     loss_fn = CombinedLoss(alpha=DICE_BCE_ALPHA)
     optimizer = optim.AdamW(
         model.parameters(), 
@@ -146,8 +198,9 @@ def main():
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
         mode='min',
-        factor=0.5,
-        patience=5,
+        threshold=0.01,
+        factor=0.2,
+        patience=3,
         min_lr=1e-6,
     )
 
@@ -161,7 +214,7 @@ def main():
 
     print(f"Initial validation accuracy:")
     check_accuracy(val_loader, model, device=DEVICE)
-    scaler = torch.amp.GradScaler('cuda')
+    scaler = torch.amp.GradScaler('cuda') # type: ignore
 
     for epoch in range(NUM_EPOCHS):
         print(f"\nEpoch {epoch+1}/{NUM_EPOCHS}")
@@ -180,7 +233,7 @@ def main():
         if early_stopping(val_loss, model):
             print(f"\nEarly stopping triggered at epoch {epoch+1}")
             # Load best model
-            model.load_state_dict(early_stopping.best_model_state)
+            model.load_state_dict(early_stopping.best_model_state) # type: ignore
             break
 
         # Save model checkpoint
