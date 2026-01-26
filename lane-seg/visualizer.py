@@ -36,7 +36,7 @@ class LaneSegmentationVisualizer:
         # Get prediction
         with torch.no_grad():
             pred = torch.sigmoid(self.model(img_tensor))
-            pred = (pred >= 1.0).float()
+            pred = (pred >= 0.9).float()
         
         # Convert to mask
         mask = pred.squeeze().cpu().numpy()

@@ -29,26 +29,44 @@ class EarlyStopping:
             self.best_model_state = model.state_dict()
             self.counter = 0
         return self.early_stop
-    
+
+class TverskyLoss(nn.Module):
+    def __init__(self, alpha=0.3, beta=0.7, smooth=1e-6):
+        super().__init__()
+        self.alpha = alpha  # Weight for False Negatives
+        self.beta = beta    # Weight for False Positives
+        self.smooth = smooth
+
+    def forward(self, pred, target):
+        pred = torch.sigmoid(pred)
+        
+        # Flatten label and prediction tensors
+        pred = pred.view(-1)
+        target = target.view(-1)
+        
+        # True Positives, False Positives & False Negatives
+        TP = (pred * target).sum()    
+        FP = ((1-target) * pred).sum()
+        FN = (target * (1-pred)).sum()
+       
+        tversky = (TP + self.smooth) / (TP + self.alpha*FN + self.beta*FP + self.smooth)  
+        
+        return 1 - tversky
+
 class CombinedLoss(nn.Module):
-    def __init__(self, alpha=0.7):
+    def __init__(self, alpha=0.3): # alpha = weight for BCE
         super().__init__()
         self.alpha = alpha
         self.bce = nn.BCEWithLogitsLoss()
-    
-    def dice_loss(self, pred, target):
-        smooth = 1e-5
-        pred = torch.sigmoid(pred)
-        intersection = (pred * target).sum(dim=(2, 3))
-        union = pred.sum(dim=(2, 3)) + target.sum(dim=(2, 3))
-        dice = (2. * intersection + smooth) / (union + smooth)
-        return 1 - dice.mean()
+        # High beta (0.7) specifically punishes False Positives
+        self.tversky = TverskyLoss(alpha=0.3, beta=0.7) 
     
     def forward(self, pred, target):
         bce = self.bce(pred, target)
-        dice = self.dice_loss(pred, target)
-        return self.alpha * bce + (1 - self.alpha) * dice
-
+        tversky = self.tversky(pred, target)
+        
+        # 30% BCE (Stability) + 70% Tversky (FP Reduction)
+        return self.alpha * bce + (1 - self.alpha) * tversky
 
 def get_val_loss(loader, model, loss_fn, device):
     """Calculate validation loss"""
@@ -61,7 +79,7 @@ def get_val_loss(loader, model, loss_fn, device):
             data = data.to(device=device)
             targets = targets.float().unsqueeze(1).to(device=device)
             
-            with torch.amp.autocast(device):
+            with torch.amp.autocast(device): # type: ignore
                 predictions = model(data)
                 loss = loss_fn(predictions, targets)
             

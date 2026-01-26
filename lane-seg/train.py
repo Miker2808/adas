@@ -19,22 +19,22 @@ from utils import (
 )
 
 # Hyperparameters etc.
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 1e-5
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 16
 NUM_EPOCHS = 50
-NUM_WORKERS = 4
-IMAGE_HEIGHT = 16*15
-IMAGE_WIDTH = 16*20
+NUM_WORKERS = 6
+IMAGE_HEIGHT = 16*30
+IMAGE_WIDTH = 16*40
 PIN_MEMORY = True
-LOAD_MODEL = False
+LOAD_MODEL = True
 TRAIN_VAL_SPLIT = 0.85
-EARLY_STOPPING_PATIENCE = 10
-MIN_DELTA = 0.001
+EARLY_STOPPING_PATIENCE = 5
+MIN_DELTA = 0.2
 DICE_BCE_ALPHA = 0.6
 
 MODEL_PATH = "weights/residual_unet_weights.pth.tar"
-SAVE_PREDICTIONS = False
+SAVE_PREDICTIONS = True
 
 # Single dataset directories
 IMAGE_DIR = "dataset/images/"
@@ -69,7 +69,7 @@ def main():
     train_transform = A.Compose(
         [
             # Resize
-            A.Resize(height=240, width=320),
+            A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
 
             # Geometry
             A.HorizontalFlip(p=0.5),
@@ -97,6 +97,14 @@ def main():
                 brightness_limit=0.2,
                 contrast_limit=0.2,
                 p=0.2,
+            ),
+
+            # Simulates shadows/dividers
+            A.RandomShadow(
+                num_shadows_limit = (1, 3),
+                shadow_dimension=5, 
+                shadow_roi=(0, 0.5, 1, 1), 
+                p=0.3
             ),
 
             # Weather
@@ -135,7 +143,7 @@ def main():
                 std=(0.229, 0.224, 0.225)
             ),
             ToTensorV2(),
-        ]
+        ] # type: ignore
     )
 
     val_transform = A.Compose(
