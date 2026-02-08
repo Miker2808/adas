@@ -30,44 +30,6 @@ class EarlyStopping:
             self.counter = 0
         return self.early_stop
 
-class TverskyLoss(nn.Module):
-    def __init__(self, alpha=0.3, beta=0.7, smooth=1e-6):
-        super().__init__()
-        self.alpha = alpha  # Weight for False Negatives
-        self.beta = beta    # Weight for False Positives
-        self.smooth = smooth
-
-    def forward(self, pred, target):
-        pred = torch.sigmoid(pred)
-        
-        # Flatten label and prediction tensors
-        pred = pred.view(-1)
-        target = target.view(-1)
-        
-        # True Positives, False Positives & False Negatives
-        TP = (pred * target).sum()    
-        FP = ((1-target) * pred).sum()
-        FN = (target * (1-pred)).sum()
-       
-        tversky = (TP + self.smooth) / (TP + self.alpha*FN + self.beta*FP + self.smooth)  
-        
-        return 1 - tversky
-
-class CombinedLoss(nn.Module):
-    def __init__(self, alpha=0.3): # alpha = weight for BCE
-        super().__init__()
-        self.alpha = alpha
-        self.bce = nn.BCEWithLogitsLoss()
-        # High beta (0.7) specifically punishes False Positives
-        self.tversky = TverskyLoss(alpha=0.3, beta=0.7) 
-    
-    def forward(self, pred, target):
-        bce = self.bce(pred, target)
-        tversky = self.tversky(pred, target)
-        
-        # 30% BCE (Stability) + 70% Tversky (FP Reduction)
-        return self.alpha * bce + (1 - self.alpha) * tversky
-
 def get_val_loss(loader, model, loss_fn, device):
     """Calculate validation loss"""
     model.eval()
@@ -90,16 +52,20 @@ def get_val_loss(loader, model, loss_fn, device):
     return total_loss / num_batches
 
 def save_checkpoint(state, filename="model_checkpoint.pth.tar"):
-    print("=> Saving checkpoint")
+    print("Saving checkpoint...")
     # Create directory if it doesn't exist
     directory = os.path.dirname(filename)
     if directory and not os.path.exists(directory):
         os.makedirs(directory)
     torch.save(state, filename)
 
-def load_checkpoint(checkpoint, model):
-    print("=> Loading checkpoint")
-    model.load_state_dict(checkpoint["state_dict"])
+def load_checkpoint(path, model):
+    print("Loading checkpoint...")
+    try:
+        checkpoint = torch.load(path)
+        model.load_state_dict(checkpoint["state_dict"], strict=False)
+    except Exception as e:
+        print(f"Unable to load checkpoint: {e}")
 
 def get_loaders(
     train_dir,
