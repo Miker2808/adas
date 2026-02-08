@@ -1,4 +1,5 @@
 import torch
+import random
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm
@@ -73,8 +74,6 @@ def train_fn(loader, model, optimizer, loss_fn, scaler):
 
             if batch_idx % 50 == 0:
                 probs = torch.sigmoid(predictions)
-                print(f"Debug Stats - Max Prob: {probs.max().item():.4f}, Min Prob: {probs.min().item():.4f}, Mean: {probs.mean().item():.4f}")
-
             loss = loss_fn(predictions, targets)
 
         optimizer.zero_grad()
@@ -115,22 +114,29 @@ def main():
     ]
 )
 
-    full_dataset = TUSimpleDataset(IMAGE_DIR, MASK_DIR, transform=train_transform)
+    full_dataset = TUSimpleDataset(IMAGE_DIR, MASK_DIR)
     dataset_size = len(full_dataset)
-    train_size = int(TRAIN_VAL_SPLIT * dataset_size)
-    val_size = dataset_size - train_size
+    indices = list(range(dataset_size))
+    split = int(TRAIN_VAL_SPLIT * dataset_size)
     
-    train_dataset, val_dataset = random_split(
-        full_dataset, 
-        [train_size, val_size],
-        generator=torch.Generator().manual_seed(42)
-    )
+    random.seed(42)
+    random.shuffle(indices)
     
-    val_dataset_with_transform = TUSimpleDataset(IMAGE_DIR, MASK_DIR, transform=val_transform)
-    val_dataset.dataset = val_dataset_with_transform
+    train_indices, val_indices = indices[:split], indices[split:]
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY, shuffle=False)
+    # 2. Create separate datasets with their own transforms
+    train_dataset = TUSimpleDataset(IMAGE_DIR, MASK_DIR, transform=train_transform)
+    val_dataset = TUSimpleDataset(IMAGE_DIR, MASK_DIR, transform=val_transform)
+
+    # 3. Create Subsets using the indices
+    train_loader = DataLoader(
+        torch.utils.data.Subset(train_dataset, train_indices), 
+        batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY, shuffle=True
+    )
+    val_loader = DataLoader(
+        torch.utils.data.Subset(val_dataset, val_indices), 
+        batch_size=BATCH_SIZE, num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY, shuffle=False
+    )
 
     model = RESNET18_UNET(in_channels=3, out_channels=1).to(DEVICE)
     criterion = LaneSegmentationLoss(bce_weight=BCE_WEIGHT, tversky_alpha=TVERSKY_ALPHA)

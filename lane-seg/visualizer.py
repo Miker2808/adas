@@ -19,8 +19,8 @@ class LaneSegmentationVisualizer:
         
         # Define transforms
         self.transform = A.Compose([
-            A.Resize(height=240, width=320),
-            A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),
+            A.Resize(height=480, width=640),
+            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensorV2()
         ])
     
@@ -36,7 +36,7 @@ class LaneSegmentationVisualizer:
         # Get prediction
         with torch.no_grad():
             pred = torch.sigmoid(self.model(img_tensor))
-            pred = (pred >= 0.9).float()
+            pred = (pred >= 0.5).float()
         
         # Convert to mask
         mask = pred.squeeze().cpu().numpy()

@@ -27,7 +27,7 @@ class FocalTverskyLoss(nn.Module):
         
         # Focal Tversky Loss: (1 - TI)^gamma
         # Gamma > 1 pushes the model to focus on pixels it is struggling to classify
-        loss = torch.pow((1 - tversky_index), 1 / self.gamma)
+        loss = torch.pow((1 - tversky_index), self.gamma)
         
         return loss
 

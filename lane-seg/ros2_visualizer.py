@@ -3,7 +3,6 @@ import torch
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import numpy as np
-from vggunet import VGG_UNET
 
 import rclpy
 from rclpy.node import Node
