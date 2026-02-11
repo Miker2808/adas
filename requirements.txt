@@ -4,3 +4,4 @@ matplotlib
 tqdm
 opencv-python
 albumentations
+beamngpy==1.29
