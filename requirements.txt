@@ -2,5 +2,5 @@ numpy
 pandas
 matplotlib
 tqdm
-opencv-python
+opencv-contrib-python
 albumentations
