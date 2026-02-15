@@ -19,19 +19,19 @@ from utils import (
 )
 
 # Hyperparameters etc.
-LEARNING_RATE = 1e-6
+LEARNING_RATE = 1e-4
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 16
-NUM_EPOCHS = 10
+NUM_EPOCHS = 50
 NUM_WORKERS = 8
-IMAGE_HEIGHT = 16*15
-IMAGE_WIDTH = 16*20
+IMAGE_HEIGHT = 16*30
+IMAGE_WIDTH = 16*40
 PIN_MEMORY = True
-LOAD_MODEL = True
+LOAD_MODEL = False
 TRAIN_VAL_SPLIT = 0.85
 EARLY_STOPPING_PATIENCE = 10
 MIN_DELTA = 0.001
-DICE_BCE_ALPHA = 0.9
+DICE_BCE_ALPHA = 0.7
 
 MODEL_PATH = "weights/residual_unet_weights.pth.tar"
 SAVE_PREDICTIONS = False
@@ -142,9 +142,8 @@ def main():
         [
             A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
             A.Normalize(
-                mean=(0.0, 0.0, 0.0),
-                std=(1.0, 1.0, 1.0),
-                max_pixel_value=255.0,
+                mean=(0.485, 0.456, 0.406),
+                std=(0.229, 0.224, 0.225)
             ),
             ToTensorV2()
         ]
