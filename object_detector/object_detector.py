@@ -1,5 +1,6 @@
 import time
 import math
+import cv2
 import numpy as np
 from ultralytics import YOLO
 from dataclasses import dataclass, field
@@ -211,14 +212,97 @@ class ObjectDetector:
             dets.append((cls_id, xyxy, conf))
         return dets
 
-    def _is_too_close(self, xyxy: np.ndarray, frame_w: int, frame_h: int) -> bool:
+        def _box_area_frac(self, xyxy: np.ndarray, frame_w: int, frame_h: int) -> float:
         x1, y1, x2, y2 = xyxy
         area = max(0.0, (x2 - x1)) * max(0.0, (y2 - y1))
-        frame_area = float(frame_w * frame_h) + self.cfg.eps_area
-        area_frac = area / frame_area
+        return area / (float(frame_w * frame_h) + self.cfg.eps_area)
+
+    def _render_debug_frame(
+        self,
+        frame: np.ndarray,
+        dets_raw: List[Tuple[int, np.ndarray, float]],
+        tracks: Dict[int, Track],
+        alert_level: str,
+        too_close_ids: Set[int],
+    ) -> np.ndarray:
+        dbg = frame.copy()
+        frame_h, frame_w = dbg.shape[:2]
+
+        # Center danger zone
+        center_w = int(frame_w * self.cfg.too_close_center_frac)
+        center_h = int(frame_h * self.cfg.too_close_center_frac)
+        cx0, cy0 = frame_w // 2, frame_h // 2
+        cx1 = max(0, cx0 - center_w // 2)
+        cy1 = max(0, cy0 - center_h // 2)
+        cx2 = min(frame_w - 1, cx0 + center_w // 2)
+        cy2 = min(frame_h - 1, cy0 + center_h // 2)
+        cv2.rectangle(dbg, (cx1, cy1), (cx2, cy2), (0, 255, 255), 2)
+        cv2.putText(dbg, "center danger zone", (cx1, max(15, cy1 - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+
+        # Path gate
+        path_half = int(frame_w * self.cfg.path_center_x_frac)
+        px1 = max(0, cx0 - path_half)
+        px2 = min(frame_w - 1, cx0 + path_half)
+        cv2.line(dbg, (px1, 0), (px1, frame_h - 1), (255, 255, 0), 1)
+        cv2.line(dbg, (px2, 0), (px2, frame_h - 1), (255, 255, 0), 1)
+        cv2.putText(dbg, "path gate", (px1 + 4, frame_h - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA)
+
+        # Raw detections
+        for det_i, (cls_id, xyxy, conf) in enumerate(dets_raw):
+            x1, y1, x2, y2 = [int(v) for v in xyxy]
+            name = self.names.get(int(cls_id), str(cls_id))
+            area_frac = self._box_area_frac(xyxy, frame_w, frame_h)
+            is_close = det_i in too_close_ids
+            color = (0, 0, 255) if is_close else (0, 220, 0)
+
+            cv2.rectangle(dbg, (x1, y1), (x2, y2), color, 2)
+            cdx, cdy = center_of_xyxy(xyxy)
+            cv2.circle(dbg, (int(cdx), int(cdy)), 3, (255, 255, 255), -1)
+
+            label = f"D{det_i} {name} conf={conf:.2f} area={area_frac:.3f}"
+            cv2.putText(dbg, label, (x1, max(15, y1 - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+
+        # Tracker / TTC overlay
+        for tid, tr in tracks.items():
+            x1, y1, x2, y2 = [int(v) for v in tr.last_xyxy]
+            tr_cx, _ = center_of_xyxy(tr.last_xyxy)
+            in_path = abs(tr_cx - frame_w / 2) < frame_w * self.cfg.path_center_x_frac
+            is_vehicle = tr.cls_id in self.vehicle_ids
+            ready = tr.age >= self.cfg.min_track_age_for_ttc
+
+            if is_vehicle and ready and in_path and tr.ttc_s <= self.hard_ttc_s:
+                tcolor = (0, 0, 255)
+            elif is_vehicle and ready and in_path and tr.ttc_s <= self.soft_ttc_s:
+                tcolor = (0, 165, 255)
+            elif is_vehicle:
+                tcolor = (255, 220, 0)
+            else:
+                tcolor = (160, 160, 160)
+
+            cv2.rectangle(dbg, (x1, y1), (x2, y2), tcolor, 1)
+            ttc_txt = "inf" if math.isinf(tr.ttc_s) else f"{tr.ttc_s:.2f}s"
+            cname = self.names.get(int(tr.cls_id), str(tr.cls_id))
+            tlabel = f"T{tid} {cname} age={tr.age} miss={tr.missed} ttc={ttc_txt} in_path={int(in_path)}"
+            cv2.putText(dbg, tlabel, (x1, min(frame_h - 6, y2 + 14)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, tcolor, 1, cv2.LINE_AA)
+
+        # Status bar
+        status_color = (0, 255, 0) if alert_level == "none" else ((0, 165, 255) if alert_level == "soft" else (0, 0, 255))
+        cv2.rectangle(dbg, (0, 0), (frame_w - 1, 46), (20, 20, 20), -1)
+        cv2.putText(dbg, f"alert={alert_level.upper()} dets={len(dets_raw)} tracks={len(tracks)}",
+                    (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.52, status_color, 2, cv2.LINE_AA)
+        cv2.putText(dbg, f"hard_ttc={self.hard_ttc_s:.2f}s soft_ttc={self.soft_ttc_s:.2f}s area_thr={self.cfg.too_close_area_frac:.3f}",
+                    (8, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (220, 220, 220), 1, cv2.LINE_AA)
+
+        return dbg
+
+    def _is_too_close(self, xyxy: np.ndarray, frame_w: int, frame_h: int) -> bool:
+        area_frac = self._box_area_frac(xyxy, frame_w, frame_h)
 
         cx, cy = center_of_xyxy(xyxy)
-        # "center danger zone" (a proxy for "in our lane / in front")
         center_w = frame_w * self.cfg.too_close_center_frac
         center_h = frame_h * self.cfg.too_close_center_frac
         in_center = (abs(cx - frame_w / 2) <= center_w / 2) and (abs(cy - frame_h / 2) <= center_h / 2)
@@ -227,55 +311,39 @@ class ObjectDetector:
         relax = self.cfg.center_area_relax_factor
         return (area_frac >= base) or (in_center and area_frac >= base * relax)
 
+
     def detect_track_and_alert(self, frame):
-        """
-        Returns:
-          - raw boxes
-          - tracks dict
-          - alert_level: "none" | "soft" | "hard"
-        """
         t = time.time()
         boxes = self.detect(frame)
         dets_raw = self._boxes_to_dets(boxes)
 
         frame_h, frame_w = frame.shape[:2]
-
-        # For tracking, we ignore very low conf if you want (optional)
         dets_for_track = [(cls_id, xyxy) for (cls_id, xyxy, conf) in dets_raw]
-
         tracks = self.tracker.update(dets_for_track, t)
 
-        # Decide alerts
         hard = False
         soft = False
 
-        # 1) any object too close => HARD
-        for cls_id, xyxy, conf in dets_raw:
+        too_close_ids: Set[int] = set()
+        for det_i, (_, xyxy, _) in enumerate(dets_raw):
             if self._is_too_close(xyxy, frame_w, frame_h):
-                hard = True
-                break
+                too_close_ids.add(det_i)
+        if too_close_ids:
+            hard = True
 
-        # 2) vehicle TTC logic (only if we have enough history)
-        # If any vehicle has TTC <= hard => HARD
-        # Else if any has TTC in (hard, soft] => SOFT
         if not hard:
             for tr in tracks.values():
                 if tr.cls_id in self.vehicle_ids and tr.age >= self.cfg.min_track_age_for_ttc:
                     cx, cy = center_of_xyxy(tr.last_xyxy)
                     in_path = abs(cx - frame_w / 2) < frame_w * self.cfg.path_center_x_frac
 
-                    # HARD: imminent collision with a vehicle
                     if in_path and tr.ttc_s <= self.hard_ttc_s:
                         hard = True
                         break
-
-                    # SOFT: soon-ish collision with a vehicle (but driver has time)
                     elif in_path and tr.ttc_s <= self.soft_ttc_s:
-
-                        if in_path and not self._is_too_close(tr.last_xyxy, frame_w, frame_h):
+                        if not self._is_too_close(tr.last_xyxy, frame_w, frame_h):
                             soft = True
 
-        # Rate-limited beeps
         now = t
         alert_level = "none"
         if hard and (now - self._last_hard) >= self.cfg.hard_cooldown_s:
@@ -287,7 +355,19 @@ class ObjectDetector:
             self._last_soft = now
             alert_level = "soft"
 
+        if self.cfg.debug_visualization:
+            debug_frame = self._render_debug_frame(
+                frame=frame,
+                dets_raw=dets_raw,
+                tracks=tracks,
+                alert_level=alert_level,
+                too_close_ids=too_close_ids,
+            )
+            cv2.imshow(self.cfg.debug_window_name, debug_frame)
+            cv2.waitKey(1)
+
         return boxes, tracks, alert_level
+
 
     def _beep(self, freq, ms):
         if _HAS_WINSOUND:
