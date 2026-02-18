@@ -5,7 +5,8 @@ from albumentations.pytorch import ToTensorV2
 import numpy as np
 import time
 from beamngpy import BeamNGpy, Scenario, Vehicle
-
+from object_detector.object_detector import ObjectDetector
+from object_detector.config_object_detector import DetectorConfig
 from segmentation.models.resnet_unet import RESNET18_UNET
 from lanedetector import LaneDetector
 
@@ -118,6 +119,8 @@ def main():
         history_length=3,
         trigger_confidence=0.66 
     )
+    cnfg = DetectorConfig()
+    obj_detector = ObjectDetector(cnfg)
 
     cap = init_camera()
     input("Press [Enter] to start lane detection...")
@@ -136,7 +139,9 @@ def main():
         ret, frame = cap.read()
         if not ret: break
 
+
         current_time = time.time()
+        obj_detector.detect(frame)
 
         if current_time - prev_detection_time > detection_interval:
             mask = seg_model.predict(frame)

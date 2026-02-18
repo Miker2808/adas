@@ -297,3 +297,4 @@ class ObjectDetector:
             winsound.Beep(int(freq), int(ms))
         else:
             print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", end="", flush=True)
+
