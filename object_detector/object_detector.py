@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 
 from object_detector.config_object_detector import DetectorConfig
 
@@ -212,7 +212,7 @@ class ObjectDetector:
             dets.append((cls_id, xyxy, conf))
         return dets
 
-        def _box_area_frac(self, xyxy: np.ndarray, frame_w: int, frame_h: int) -> float:
+    def _box_area_frac(self, xyxy: np.ndarray, frame_w: int, frame_h: int) -> float:
         x1, y1, x2, y2 = xyxy
         area = max(0.0, (x2 - x1)) * max(0.0, (y2 - y1))
         return area / (float(frame_w * frame_h) + self.cfg.eps_area)

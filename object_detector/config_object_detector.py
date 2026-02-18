@@ -70,6 +70,13 @@ class DetectorConfig:
     track_max_missed: int = 10
     """How many consecutive frames a track can be missed before being deleted."""
 
+    # --- Visualization ---
+    debug_visualization: bool = True
+    """If True, shows a live debug window with detector internals and overlays."""
+
+    debug_window_name: str = "Object Detector Debug"
+    """OpenCV window title used for the detector debug visualization."""
+
     # F Tier (Litteral trash, never change it, does absolutly nothing, you are wasting your time)
 
     # --- Audio behavior ---
