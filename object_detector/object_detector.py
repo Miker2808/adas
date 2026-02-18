@@ -5,16 +5,13 @@ from ultralytics import YOLO
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from config_object_detector import DetectorConfig
+from object_detector.config_object_detector import DetectorConfig
 
 try:
     import winsound
     _HAS_WINSOUND = True
 except Exception:
     _HAS_WINSOUND = False
-
-
-
 
 # -----------------------------
 # Utilities

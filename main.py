@@ -93,7 +93,7 @@ def start_simulation():
     scenario.make(bng)
     bng.settings.set_deterministic(60)
     bng.scenario.load(scenario)
-    bng.scenario.start()
+    #bng.scenario.start()
     vehicle.ai.set_mode('disabled')
 
     print("Spawning traffic...")
@@ -124,7 +124,8 @@ def main():
 
     cap = init_camera()
     input("Press [Enter] to start lane detection...")
-
+    bng.scenario.start()
+    
     prev_detection_time = 0
     detection_interval = 1.0 / LANE_DETECTION_RATE_HZ
     
