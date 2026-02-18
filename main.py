@@ -99,6 +99,8 @@ def start_simulation():
     print("Spawning traffic...")
     time.sleep(1.0)
     bng.traffic.spawn(max_amount=5)
+    bng.scenario.start()
+    bng.pause()
 
     return bng, scenario, vehicle
 
@@ -124,7 +126,7 @@ def main():
 
     cap = init_camera()
     input("Press [Enter] to start lane detection...")
-    bng.scenario.start()
+    bng.resume()
     
     prev_detection_time = 0
     detection_interval = 1.0 / LANE_DETECTION_RATE_HZ
@@ -142,7 +144,7 @@ def main():
 
 
         current_time = time.time()
-        obj_detector.detect(frame)
+        obj_detector.detect_track_and_alert(frame)
 
         if current_time - prev_detection_time > detection_interval:
             mask = seg_model.predict(frame)
