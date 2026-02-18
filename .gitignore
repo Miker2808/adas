@@ -4,4 +4,4 @@ dataset/
 **.pth**
 samples**
 saved_images
-**.pt
+*.pt
