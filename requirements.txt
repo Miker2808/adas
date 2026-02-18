@@ -2,6 +2,7 @@ numpy
 pandas
 matplotlib
 tqdm
-opencv-python
+opencv-contrib-python
 albumentations
 beamngpy==1.29
+ultralytics

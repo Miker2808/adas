@@ -29,6 +29,26 @@ class EarlyStopping:
             self.best_model_state = model.state_dict()
             self.counter = 0
         return self.early_stop
+    
+class CombinedLoss(nn.Module):
+    def __init__(self, alpha=0.7):
+        super().__init__()
+        self.alpha = alpha
+        self.bce = nn.BCEWithLogitsLoss()
+    
+    def dice_loss(self, pred, target):
+        smooth = 1e-5
+        pred = torch.sigmoid(pred)
+        intersection = (pred * target).sum(dim=(2, 3))
+        union = pred.sum(dim=(2, 3)) + target.sum(dim=(2, 3))
+        dice = (2. * intersection + smooth) / (union + smooth)
+        return 1 - dice.mean()
+    
+    def forward(self, pred, target):
+        bce = self.bce(pred, target)
+        dice = self.dice_loss(pred, target)
+        return self.alpha * bce + (1 - self.alpha) * dice
+
 
 def get_val_loss(loader, model, loss_fn, device):
     """Calculate validation loss"""
@@ -41,7 +61,7 @@ def get_val_loss(loader, model, loss_fn, device):
             data = data.to(device=device)
             targets = targets.float().unsqueeze(1).to(device=device)
             
-            with torch.amp.autocast(device): # type: ignore
+            with torch.amp.autocast(device):
                 predictions = model(data)
                 loss = loss_fn(predictions, targets)
             
@@ -52,20 +72,16 @@ def get_val_loss(loader, model, loss_fn, device):
     return total_loss / num_batches
 
 def save_checkpoint(state, filename="model_checkpoint.pth.tar"):
-    print("Saving checkpoint...")
+    print("=> Saving checkpoint")
     # Create directory if it doesn't exist
     directory = os.path.dirname(filename)
     if directory and not os.path.exists(directory):
         os.makedirs(directory)
     torch.save(state, filename)
 
-def load_checkpoint(path, model):
-    print("Loading checkpoint...")
-    try:
-        checkpoint = torch.load(path)
-        model.load_state_dict(checkpoint["state_dict"], strict=False)
-    except Exception as e:
-        print(f"Unable to load checkpoint: {e}")
+def load_checkpoint(checkpoint, model):
+    print("=> Loading checkpoint")
+    model.load_state_dict(checkpoint["state_dict"])
 
 def get_loaders(
     train_dir,

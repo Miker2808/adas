@@ -9,6 +9,9 @@ from models.resnet_unet import RESNET18_UNET
 VIDEO_PATH = "sample1.mp4"
 CHECKPOINT_PATH = "weights/residual_unet_weights.pth.tar"
 
+IMAGE_HEIGHT = 16*30
+IMAGE_WIDTH = 16*40
+
 class LaneSegmentationVisualizer:
     def __init__(self):
         # Load model
@@ -19,8 +22,11 @@ class LaneSegmentationVisualizer:
         
         # Define transforms
         self.transform = A.Compose([
-            A.Resize(height=480, width=640),
-            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            A.Resize(height=IMAGE_HEIGHT, width=IMAGE_WIDTH),
+            A.Normalize(
+                mean=(0.485, 0.456, 0.406),
+                std=(0.229, 0.224, 0.225)
+            ),
             ToTensorV2()
         ])
     
@@ -36,6 +42,7 @@ class LaneSegmentationVisualizer:
         # Get prediction
         with torch.no_grad():
             pred = torch.sigmoid(self.model(img_tensor))
+            pred = (pred > 0.5).float()
         
         # Convert to mask
         mask = pred.squeeze().cpu().numpy()
