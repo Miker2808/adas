@@ -44,6 +44,30 @@ class DetectorConfig:
     """Minimum number of frames a track must survive before we trust TTC enough to warn.
     Prevents warnings from one-frame flicker/noise."""
 
+    min_track_age_for_too_close: int = 2
+    """Minimum track age before "too close" can latch.
+    Helps avoid one-frame detector noise triggering hard alerts."""
+
+    hard_confirm_frames: int = 2
+    """Consecutive frames required before a HARD risk is accepted."""
+
+    soft_confirm_frames: int = 2
+    """Consecutive frames required before a SOFT risk is accepted."""
+
+    too_close_clear_ratio: float = 0.85
+    """Hysteresis clear ratio for too-close latching.
+    Latch enters at too_close_area_frac and clears at too_close_area_frac * too_close_clear_ratio."""
+
+    too_close_dsdt_enter_px_s: float = 8.0
+    """Minimum positive box-scale growth rate (px/s) considered "approaching" for too-close entry."""
+
+    too_close_ttc_enter_s: float = 6.0
+    """If TTC is below this, object is considered meaningfully approaching for too-close entry."""
+
+    too_close_very_large_factor: float = 1.35
+    """Area override multiplier for entering too-close even with weak approach signal.
+    Effective override threshold is too_close_area_frac * too_close_very_large_factor."""
+
     # B Tier (These need to be set once, but once set they are forgotten and never ever touced, like ever)
 
     # --- YOLO inference ---

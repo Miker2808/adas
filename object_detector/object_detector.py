@@ -184,6 +184,9 @@ class ObjectDetector:
         self._last_hard = 0.0
 
         self.tracker = SimpleIoUTracker(self.cfg)
+        self._hard_risk_streak = 0
+        self._soft_risk_streak = 0
+        self._too_close_latch: Dict[int, bool] = {}
 
         # Map car-like class names to ids (from model)
         self.names = self.model.names  # dict: id->name in ultralytics
@@ -223,7 +226,7 @@ class ObjectDetector:
         dets_raw: List[Tuple[int, np.ndarray, float]],
         tracks: Dict[int, Track],
         alert_level: str,
-        too_close_ids: Set[int],
+        too_close_track_ids: Set[int],
     ) -> np.ndarray:
         dbg = frame.copy()
         frame_h, frame_w = dbg.shape[:2]
@@ -254,8 +257,7 @@ class ObjectDetector:
             x1, y1, x2, y2 = [int(v) for v in xyxy]
             name = self.names.get(int(cls_id), str(cls_id))
             area_frac = self._box_area_frac(xyxy, frame_w, frame_h)
-            is_close = det_i in too_close_ids
-            color = (0, 0, 255) if is_close else (0, 220, 0)
+            color = (0, 220, 0)
 
             cv2.rectangle(dbg, (x1, y1), (x2, y2), color, 2)
             cdx, cdy = center_of_xyxy(xyxy)
@@ -273,7 +275,9 @@ class ObjectDetector:
             is_vehicle = tr.cls_id in self.vehicle_ids
             ready = tr.age >= self.cfg.min_track_age_for_ttc
 
-            if is_vehicle and ready and in_path and tr.ttc_s <= self.hard_ttc_s:
+            if tid in too_close_track_ids:
+                tcolor = (0, 0, 255)
+            elif is_vehicle and ready and in_path and tr.ttc_s <= self.hard_ttc_s:
                 tcolor = (0, 0, 255)
             elif is_vehicle and ready and in_path and tr.ttc_s <= self.soft_ttc_s:
                 tcolor = (0, 165, 255)
@@ -285,7 +289,7 @@ class ObjectDetector:
             cv2.rectangle(dbg, (x1, y1), (x2, y2), tcolor, 1)
             ttc_txt = "inf" if math.isinf(tr.ttc_s) else f"{tr.ttc_s:.2f}s"
             cname = self.names.get(int(tr.cls_id), str(tr.cls_id))
-            tlabel = f"T{tid} {cname} age={tr.age} miss={tr.missed} ttc={ttc_txt} in_path={int(in_path)}"
+            tlabel = f"T{tid} {cname} age={tr.age} miss={tr.missed} ttc={ttc_txt} dsdt={tr.dsdt_ema:.1f} close={int(tid in too_close_track_ids)} in_path={int(in_path)}"
             cv2.putText(dbg, tlabel, (x1, min(frame_h - 6, y2 + 14)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, tcolor, 1, cv2.LINE_AA)
 
@@ -294,22 +298,50 @@ class ObjectDetector:
         cv2.rectangle(dbg, (0, 0), (frame_w - 1, 46), (20, 20, 20), -1)
         cv2.putText(dbg, f"alert={alert_level.upper()} dets={len(dets_raw)} tracks={len(tracks)}",
                     (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.52, status_color, 2, cv2.LINE_AA)
-        cv2.putText(dbg, f"hard_ttc={self.hard_ttc_s:.2f}s soft_ttc={self.soft_ttc_s:.2f}s area_thr={self.cfg.too_close_area_frac:.3f}",
+        cv2.putText(dbg, f"hard_ttc={self.hard_ttc_s:.2f}s soft_ttc={self.soft_ttc_s:.2f}s area_on={self.cfg.too_close_area_frac:.3f} area_off={self.cfg.too_close_area_frac * self.cfg.too_close_clear_ratio:.3f}",
                     (8, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (220, 220, 220), 1, cv2.LINE_AA)
 
         return dbg
 
-    def _is_too_close(self, xyxy: np.ndarray, frame_w: int, frame_h: int) -> bool:
-        area_frac = self._box_area_frac(xyxy, frame_w, frame_h)
-
+    def _in_center_zone(self, xyxy: np.ndarray, frame_w: int, frame_h: int) -> bool:
         cx, cy = center_of_xyxy(xyxy)
         center_w = frame_w * self.cfg.too_close_center_frac
         center_h = frame_h * self.cfg.too_close_center_frac
-        in_center = (abs(cx - frame_w / 2) <= center_w / 2) and (abs(cy - frame_h / 2) <= center_h / 2)
+        return (abs(cx - frame_w / 2) <= center_w / 2) and (abs(cy - frame_h / 2) <= center_h / 2)
 
-        base = self.cfg.too_close_area_frac
+    def _is_area_close(self, xyxy: np.ndarray, frame_w: int, frame_h: int, base_area_frac: float) -> bool:
+        area_frac = self._box_area_frac(xyxy, frame_w, frame_h)
+        in_center = self._in_center_zone(xyxy, frame_w, frame_h)
         relax = self.cfg.center_area_relax_factor
-        return (area_frac >= base) or (in_center and area_frac >= base * relax)
+        return (area_frac >= base_area_frac) or (in_center and area_frac >= base_area_frac * relax)
+
+    def _is_too_close(self, xyxy: np.ndarray, frame_w: int, frame_h: int) -> bool:
+        return self._is_area_close(xyxy, frame_w, frame_h, self.cfg.too_close_area_frac)
+
+    def _track_too_close(self, tr: Track, frame_w: int, frame_h: int) -> bool:
+        tid = tr.track_id
+        latched = self._too_close_latch.get(tid, False)
+
+        area_frac = self._box_area_frac(tr.last_xyxy, frame_w, frame_h)
+        enter_area = self._is_area_close(tr.last_xyxy, frame_w, frame_h, self.cfg.too_close_area_frac)
+        clear_area = self._is_area_close(
+            tr.last_xyxy,
+            frame_w,
+            frame_h,
+            self.cfg.too_close_area_frac * self.cfg.too_close_clear_ratio,
+        )
+
+        approaching = (tr.dsdt_ema >= self.cfg.too_close_dsdt_enter_px_s) or (tr.ttc_s <= self.cfg.too_close_ttc_enter_s)
+        very_large = area_frac >= (self.cfg.too_close_area_frac * self.cfg.too_close_very_large_factor)
+
+        if latched:
+            next_latched = clear_area
+        else:
+            age_ok = tr.age >= self.cfg.min_track_age_for_too_close
+            next_latched = age_ok and enter_area and (approaching or very_large)
+
+        self._too_close_latch[tid] = next_latched
+        return next_latched
 
 
     def detect_track_and_alert(self, frame):
@@ -321,28 +353,50 @@ class ObjectDetector:
         dets_for_track = [(cls_id, xyxy) for (cls_id, xyxy, conf) in dets_raw]
         tracks = self.tracker.update(dets_for_track, t)
 
-        hard = False
-        soft = False
+        hard_candidate = False
+        soft_candidate = False
 
-        too_close_ids: Set[int] = set()
-        for det_i, (_, xyxy, _) in enumerate(dets_raw):
-            if self._is_too_close(xyxy, frame_w, frame_h):
-                too_close_ids.add(det_i)
-        if too_close_ids:
-            hard = True
+        active_track_ids = set(tracks.keys())
+        self._too_close_latch = {tid: self._too_close_latch.get(tid, False) for tid in active_track_ids}
 
-        if not hard:
-            for tr in tracks.values():
-                if tr.cls_id in self.vehicle_ids and tr.age >= self.cfg.min_track_age_for_ttc:
-                    cx, cy = center_of_xyxy(tr.last_xyxy)
-                    in_path = abs(cx - frame_w / 2) < frame_w * self.cfg.path_center_x_frac
+        too_close_track_ids: Set[int] = set()
+        for tid, tr in tracks.items():
+            if tr.missed > 0:
+                self._too_close_latch[tid] = False
+                continue
 
-                    if in_path and tr.ttc_s <= self.hard_ttc_s:
-                        hard = True
-                        break
-                    elif in_path and tr.ttc_s <= self.soft_ttc_s:
-                        if not self._is_too_close(tr.last_xyxy, frame_w, frame_h):
-                            soft = True
+            if self._track_too_close(tr, frame_w, frame_h):
+                too_close_track_ids.add(tid)
+
+        if too_close_track_ids:
+            hard_candidate = True
+
+        for tr in tracks.values():
+            if tr.missed > 0:
+                continue
+
+            if tr.cls_id in self.vehicle_ids and tr.age >= self.cfg.min_track_age_for_ttc:
+                cx, _ = center_of_xyxy(tr.last_xyxy)
+                in_path = abs(cx - frame_w / 2) < frame_w * self.cfg.path_center_x_frac
+
+                if in_path and tr.ttc_s <= self.hard_ttc_s:
+                    hard_candidate = True
+                elif in_path and tr.ttc_s <= self.soft_ttc_s:
+                    if tr.track_id not in too_close_track_ids:
+                        soft_candidate = True
+
+        if hard_candidate:
+            self._hard_risk_streak += 1
+        else:
+            self._hard_risk_streak = 0
+
+        if soft_candidate and not hard_candidate:
+            self._soft_risk_streak += 1
+        else:
+            self._soft_risk_streak = 0
+
+        hard = self._hard_risk_streak >= self.cfg.hard_confirm_frames
+        soft = (not hard) and (self._soft_risk_streak >= self.cfg.soft_confirm_frames)
 
         now = t
         alert_level = "none"
@@ -361,7 +415,7 @@ class ObjectDetector:
                 dets_raw=dets_raw,
                 tracks=tracks,
                 alert_level=alert_level,
-                too_close_ids=too_close_ids,
+                too_close_track_ids=too_close_track_ids,
             )
             cv2.imshow(self.cfg.debug_window_name, debug_frame)
             cv2.waitKey(1)
@@ -374,4 +428,3 @@ class ObjectDetector:
             winsound.Beep(int(freq), int(ms))
         else:
             print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", end="", flush=True)
-
