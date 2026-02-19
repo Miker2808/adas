@@ -4,109 +4,41 @@ from typing import Optional, Tuple
 @dataclass(frozen=True)
 class DetectorConfig:
     
-    # S Tier Vars (Can make/break the model, must me fine-tuned)
+    ttc_soft_warning_seconds: float = 5.0
+    ttc_hard_warning_seconds: float = 4.0
 
-    # --- Warning timing (seconds) ---
-    soft_ttc_s: float = 5.0
-    """SOFT warning threshold (seconds to collision).
-    If a tracked vehicle's estimated TTC <= soft_ttc_s (but > hard_ttc_s),
-    we play a soft warning (driver has time to react)."""
+    danger_zone_screen_coverage_ratio: float = 0.12
+    center_danger_zone_size_ratio: float = 0.20
+    center_zone_coverage_multiplier: float = 0.60
+    ego_path_width_ratio: float = 0.15
 
-    hard_ttc_s: float = 4.0
-    """HARD warning threshold (seconds to collision).
-    If a tracked vehicle's estimated TTC <= hard_ttc_s, we play a hard warning."""
+    time_to_collision_smoothing_factor: float = 0.35
+    minimum_frames_to_trust_track: int = 4
 
-    # --- Proximity "too close" heuristics (vision-only proxy) ---
-    too_close_area_frac: float = 0.12
-    """Box area / frame area threshold that triggers HARD warning for any object.
-    Example: 0.12 means if a detected object covers >=12% of the screen, it's considered too close."""
+    yolo_model_path: str = "yolo26l.pt"
+    yolo_confidence_threshold: float = 0.25
+    yolo_nms_iou_threshold: float = 0.45
+    yolo_compute_device: Optional[str] = None
+    target_vehicle_classes: Tuple[str, ...] = ("car", "truck", "bus")
 
-    too_close_center_frac: float = 0.20
-    """Size of the 'center danger zone' as a fraction of frame width/height.
-    Example: 0.20 creates a center rectangle of 20% width and 20% height.
-    Objects inside this zone are treated as more threatening."""
+    tracker_iou_matching_threshold: float = 0.30
+    tracker_max_missed_frames: int = 10
 
-    center_area_relax_factor: float = 0.60
-    """If an object is inside the center danger zone, we allow a smaller area to still count as too close.
-    Effective threshold becomes too_close_area_frac * center_area_relax_factor when inside center zone."""
+    enable_debug_visualization: bool = True
+    debug_window_title: str = "Object Detector Debug"
 
-    path_center_x_frac: float = 0.15
-    """'In path' gate for vehicle TTC warnings.
-    Vehicle must be within +/- (path_center_x_frac * frame_w) of screen center to count as in our path.
-    Smaller => fewer false alarms, larger => more sensitive."""
+    audio_soft_warning_frequency_hz: int = 1400
+    audio_soft_warning_duration_ms: int = 90
+    audio_hard_warning_frequency_hz: int = 2600
+    audio_hard_warning_duration_ms: int = 180
+    
+    audio_soft_warning_cooldown_seconds: float = 1.0
+    audio_hard_warning_cooldown_seconds: float = 0.4
 
-    # --- TTC smoothing / stability ---
-    ttc_ema_alpha: float = 0.35
-    """EMA smoothing for box-height scale and ds/dt used in TTC estimation.
-    Higher => more responsive but noisier. Lower => smoother but slower."""
+    math_min_time_delta_seconds: float = 1e-3
+    math_min_bounding_box_height_pixels: float = 1.0
+    math_min_approach_speed_pixels_per_second: float = 3.0
+    math_min_box_height_for_warning_pixels: float = 40.0
+    math_epsilon_area: float = 1e-6
 
-    min_track_age_for_ttc: int = 4
-    """Minimum number of frames a track must survive before we trust TTC enough to warn.
-    Prevents warnings from one-frame flicker/noise."""
-
-    # B Tier (These need to be set once, but once set they are forgotten and never ever touced, like ever)
-
-    # --- YOLO inference ---
-    model_path: str = "yolo26l.pt"
-    """Path to YOLO model weights."""
-
-    conf: float = 0.25
-    """YOLO confidence threshold (higher => fewer detections)."""
-
-    iou: float = 0.45
-    """YOLO NMS IoU threshold (higher => more boxes survive NMS)."""
-
-    device: Optional[str] = None
-    """YOLO device string (e.g. 'cpu', 'cuda:0'). None lets ultralytics decide."""
-
-    car_class_names: Tuple[str, ...] = ("car", "truck", "bus")
-    """YOLO class names treated as 'vehicles' for TTC-based warning logic."""
-
-    # --- Tracker matching ---
-    track_iou_match_thresh: float = 0.30
-    """IoU threshold to match a detection to an existing track.
-    Higher => fewer ID switches but more missed matches."""
-
-    track_max_missed: int = 10
-    """How many consecutive frames a track can be missed before being deleted."""
-
-    # --- Visualization ---
-    debug_visualization: bool = True
-    """If True, shows a live debug window with detector internals and overlays."""
-
-    debug_window_name: str = "Object Detector Debug"
-    """OpenCV window title used for the detector debug visualization."""
-
-    # F Tier (Litteral trash, never change it, does absolutly nothing, you are wasting your time)
-
-    # --- Audio behavior ---
-    soft_beep_freq: int = 1400
-    """Frequency (Hz) for soft warning beep."""
-
-    soft_beep_ms: int = 90
-    """Duration (ms) for soft warning beep."""
-
-    hard_beep_freq: int = 2600
-    """Frequency (Hz) for hard warning beep."""
-
-    hard_beep_ms: int = 180
-    """Duration (ms) for hard warning beep."""
-
-    soft_cooldown_s: float = 1.0
-    """Minimum time between soft warnings (seconds)."""
-
-    hard_cooldown_s: float = 0.4
-    """Minimum time between hard warnings (seconds)."""
-
-    # --- Numerical stability / clamps ---
-    dt_min_s: float = 1e-3
-    """Minimum dt used to avoid divide-by-zero when time deltas are tiny."""
-
-    box_height_min_px: float = 1.0
-    """Minimum box height in pixels used as a scale proxy (prevents zero)."""
-
-    dsdt_min_px_s: float = 1e-3
-    """Minimum ds/dt (pixels/sec). If ds/dt <= this, TTC is treated as infinity (not approaching)."""
-
-    eps_area: float = 1e-6
-    """Small epsilon to avoid division by zero in area calculations."""
+    minimum_ego_speed_for_warnings_m_s: float = 1.5

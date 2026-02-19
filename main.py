@@ -4,26 +4,26 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import numpy as np
 import time
+import math
 from beamngpy import BeamNGpy, Scenario, Vehicle
+
 from object_detector.object_detector import ObjectDetector
 from object_detector.config_object_detector import DetectorConfig
 from segmentation.models.resnet_unet import RESNET18_UNET
 from lanedetector import LaneDetector
+from audio_manager import AudioManager
 
-# BeamNG
 BNG_HOME = r'E:\Games\BeamNG.drive'
 BNG_USER = r"C:\Users\miker\AppData\Local\BeamNG.drive\0.32"
 BNG_HOST = 'localhost'
 BNG_PORT = 64256
 
-# Scenario
 SCENARIO_MAP = 'west_coast_usa'
 SCENARIO_NAME = 'example'
 VEHICLE_MODEL = 'etk800'
 SPAWN_POS = (-836.7, -501.05, 106.62)
 SPAWN_ROT = (0.002, 0.004, 0.923, -0.386)
 
-# Camera (OBS)
 CAMERA_ID = 0
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
@@ -32,7 +32,6 @@ MODEL_INPUT_HEIGHT = 240
 MODEL_INPUT_WIDTH = 320
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# LANE_DETECTION
 LANE_DETECTION_RATE_HZ = 10.0 
 LANE_CONFIDENCE_THRESHOLD = 0.9
 LANE_DETECTION_ROI = (0.3, 0.8, 0.4, 0.20)
@@ -52,18 +51,12 @@ class LaneSegmentationModel:
         ])
     
     def predict(self, frame):
-        """
-        Runs the Neural Network inference.
-        Returns the binary mask (0 or 255).
-        """
         original_height, original_width = frame.shape[:2]
         
-        # preprocess
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         augmented = self.transform(image=frame_rgb)
         img_tensor = augmented["image"].unsqueeze(0).to(DEVICE)
         
-        # inference
         with torch.no_grad():
             pred = torch.sigmoid(self.model(img_tensor))
             pred = (pred >= LANE_CONFIDENCE_THRESHOLD).float() 
@@ -94,7 +87,6 @@ def start_simulation():
     scenario.make(bng)
     bng.settings.set_deterministic(60)
     bng.scenario.load(scenario)
-    #bng.scenario.start()
     vehicle.ai.set_mode('disabled')
 
     print("Spawning traffic...")
@@ -112,55 +104,75 @@ def main():
         print(f"Failed to start simulation: {e}")
         return
 
-    # Initialize components
     seg_model = LaneSegmentationModel()
     
-    # ROI: (x_start, y_start, width, height) as percentages of screen
-    # Adjust 'roi_rect' to move the trigger box.
     detector = LaneDetector(
         roi_rect=LANE_DETECTION_ROI,
         history_length=5,
         trigger_confidence=0.8 
     )
+    
     cnfg = DetectorConfig()
     obj_detector = ObjectDetector(cnfg)
+    audio_manager = AudioManager()
 
     cap = init_camera()
-    input("Press [Enter] to start lane detection...")
+    input("Press [Enter] to start ADAS system...")
     bng.resume()
     
     prev_detection_time = 0
     detection_interval = 1.0 / LANE_DETECTION_RATE_HZ
     
-    display_frame = np.zeros((CAMERA_HEIGHT, CAMERA_WIDTH, 3), dtype=np.uint8)
-
-    print(f"System running. Detection rate capped at {LANE_DETECTION_RATE_HZ}Hz. Press 'q' to exit.")
+    print(f"System running. Press 'q' to exit.")
 
     while True:
-        # We only update data from the scenario, we don't step physics (handled by game in real-time now)
         scenario.update()
+        vehicle.poll_sensors()
+        
+        vel = vehicle.state['vel']
+        ego_speed_m_s = math.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
         
         ret, frame = cap.read()
-        if not ret: break
-
+        if not ret: 
+            break
 
         current_time = time.time()
-        obj_detector.detect_track_and_alert(frame)
+        
+        obj_alert_level, combined_frame = obj_detector.detect_track_and_alert(frame, ego_speed_m_s)
+        
+        if obj_alert_level == "hard":
+            audio_manager.play_beep(
+                cnfg.audio_hard_warning_frequency_hz, 
+                cnfg.audio_hard_warning_duration_ms, 
+                cnfg.audio_hard_warning_cooldown_seconds
+            )
+        elif obj_alert_level == "soft":
+            audio_manager.play_beep(
+                cnfg.audio_soft_warning_frequency_hz, 
+                cnfg.audio_soft_warning_duration_ms, 
+                cnfg.audio_soft_warning_cooldown_seconds
+            )
 
         if current_time - prev_detection_time > detection_interval:
             mask = seg_model.predict(frame)
             
-            detector.update(mask)
+            is_lane_warning = detector.update(
+                mask, 
+                ego_speed_m_s, 
+                cnfg.minimum_ego_speed_for_warnings_m_s, 
+                audio_manager
+            )
             
             prev_detection_time = current_time
 
-            print(vehicle.state['pos'], vehicle.state['vel'])
-
-        display_frame = detector.visualize_state(frame)
+        combined_frame = detector.visualize_state(combined_frame)
         
-        if display_frame is not None:
-            display_frame = cv2.resize(display_frame, (640, 360))
-            cv2.imshow('Lane Departure Warning System', display_frame)
+        cv2.putText(combined_frame, f"Ego Speed: {ego_speed_m_s * 3.6:.1f} km/h", (10, 80), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        if combined_frame is not None:
+            display_frame = cv2.resize(combined_frame, (1280, 720))
+            cv2.imshow('ADAS Unified Window', display_frame)
 
         key = cv2.waitKey(1)
         if key == ord('q'):
