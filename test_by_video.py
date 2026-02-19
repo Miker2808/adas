@@ -106,7 +106,7 @@ def main(video_path):
             break
 
         current_time = time.time()
-        obj_detector.detect_track_and_alert(frame)
+        
 
         if current_time - prev_detection_time > detection_interval:
             mask = seg_model.predict(frame)
@@ -114,6 +114,7 @@ def main(video_path):
             prev_detection_time = current_time
 
         display_frame = detector.visualize_state(frame)
+        display_frame = obj_detector.detect_track_and_alert(frame, i_display_frame=display_frame)
         if display_frame is not None:
             display_frame = cv2.resize(display_frame, (640, 360))
             cv2.imshow("Lane Departure Warning System", display_frame)

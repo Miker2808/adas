@@ -228,7 +228,7 @@ class ObjectDetector:
         alert_level: str,
         too_close_track_ids: Set[int],
     ) -> np.ndarray:
-        dbg = frame.copy()
+        dbg = frame
         frame_h, frame_w = dbg.shape[:2]
 
         # Center danger zone
@@ -344,7 +344,7 @@ class ObjectDetector:
         return next_latched
 
 
-    def detect_track_and_alert(self, frame):
+    def detect_track_and_alert(self, frame, i_display_frame=None):
         t = time.time()
         boxes = self.detect(frame)
         dets_raw = self._boxes_to_dets(boxes)
@@ -409,18 +409,16 @@ class ObjectDetector:
             self._last_soft = now
             alert_level = "soft"
 
-        if self.cfg.debug_visualization:
-            debug_frame = self._render_debug_frame(
-                frame=frame,
+        if self.cfg.debug_visualization and i_display_frame is not None:
+            i_display_frame = self._render_debug_frame(
+                frame=i_display_frame,
                 dets_raw=dets_raw,
                 tracks=tracks,
                 alert_level=alert_level,
                 too_close_track_ids=too_close_track_ids,
             )
-            cv2.imshow(self.cfg.debug_window_name, debug_frame)
-            cv2.waitKey(1)
 
-        return boxes, tracks, alert_level
+        return i_display_frame
 
 
     def _beep(self, freq, ms):
