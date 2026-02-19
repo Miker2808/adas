@@ -12,7 +12,7 @@ class DetectorConfig:
     If a tracked vehicle's estimated TTC <= soft_ttc_s (but > hard_ttc_s),
     we play a soft warning (driver has time to react)."""
 
-    hard_ttc_s: float = 4.0
+    hard_ttc_s: float = 2.0
     """HARD warning threshold (seconds to collision).
     If a tracked vehicle's estimated TTC <= hard_ttc_s, we play a hard warning."""
 
@@ -53,7 +53,7 @@ class DetectorConfig:
     conf: float = 0.25
     """YOLO confidence threshold (higher => fewer detections)."""
 
-    iou: float = 0.45
+    iou: float = 0.35
     """YOLO NMS IoU threshold (higher => more boxes survive NMS)."""
 
     device: Optional[str] = None
