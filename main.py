@@ -11,8 +11,8 @@ from segmentation.models.resnet_unet import RESNET18_UNET
 from lanedetector import LaneDetector
 
 # BeamNG
-BNG_HOME = r'C:\Simulators\BeamNG.drive'
-BNG_USER = r"C:\Users\mike\AppData\Local\BeamNG.drive\0.32"
+BNG_HOME = r'E:\Games\BeamNG.drive'
+BNG_USER = r"C:\Users\miker\AppData\Local\BeamNG.drive\0.32"
 BNG_HOST = 'localhost'
 BNG_PORT = 64256
 
@@ -20,11 +20,11 @@ BNG_PORT = 64256
 SCENARIO_MAP = 'west_coast_usa'
 SCENARIO_NAME = 'example'
 VEHICLE_MODEL = 'etk800'
-SPAWN_POS = (-819.472, -500.348, 106.633)
+SPAWN_POS = (-836.7, -501.05, 106.62)
 SPAWN_ROT = (0.002, 0.004, 0.923, -0.386)
 
 # Camera (OBS)
-CAMERA_ID = 1
+CAMERA_ID = 0
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
 CHECKPOINT_PATH = "segmentation/weights/residual_unet_weights.pth.tar"
@@ -33,8 +33,9 @@ MODEL_INPUT_WIDTH = 320
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # LANE_DETECTION
-LANE_DETECTION_RATE_HZ = 5.0 
+LANE_DETECTION_RATE_HZ = 10.0 
 LANE_CONFIDENCE_THRESHOLD = 0.9
+LANE_DETECTION_ROI = (0.3, 0.8, 0.4, 0.20)
 
 class LaneSegmentationModel:
     def __init__(self):
@@ -117,9 +118,9 @@ def main():
     # ROI: (x_start, y_start, width, height) as percentages of screen
     # Adjust 'roi_rect' to move the trigger box.
     detector = LaneDetector(
-        roi_rect=(0.35, 0.65, 0.3, 0.30),
-        history_length=3,
-        trigger_confidence=0.66 
+        roi_rect=LANE_DETECTION_ROI,
+        history_length=5,
+        trigger_confidence=0.8 
     )
     cnfg = DetectorConfig()
     obj_detector = ObjectDetector(cnfg)
@@ -152,6 +153,8 @@ def main():
             detector.update(mask)
             
             prev_detection_time = current_time
+
+            print(vehicle.state['pos'], vehicle.state['vel'])
 
         display_frame = detector.visualize_state(frame)
         
