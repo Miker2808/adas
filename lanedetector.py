@@ -1,8 +1,13 @@
 import cv2
 import numpy as np
 import time
-import winsound
 from collections import deque
+
+try:
+    import winsound
+    _HAS_WINSOUND = True
+except Exception:
+    _HAS_WINSOUND = False
 
 class LaneDetector:
     def __init__(
@@ -137,5 +142,8 @@ class LaneDetector:
         """Non-blocking beep with cooldown"""
         now = time.time()
         if now - self.last_beep_time > 1.0: # Max 1 beep per second
-            winsound.Beep(2000, 300) # Frequency, Duration
+            if _HAS_WINSOUND:
+                winsound.Beep(2000, 300) # Frequency, Duration
+            else:
+                print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", end="", flush=True)
             self.last_beep_time = now
