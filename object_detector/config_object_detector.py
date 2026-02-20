@@ -1,13 +1,13 @@
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-@dataclass(frozen=True)
+@dataclass
 class DetectorConfig:
     
     ttc_soft_warning_seconds: float = 5.0
-    ttc_hard_warning_seconds: float = 4.0
+    ttc_hard_warning_seconds: float = 3.0
 
-    danger_zone_screen_coverage_ratio: float = 0.12
+    danger_zone_screen_coverage_ratio: float = 0.2
     center_danger_zone_size_ratio: float = 0.20
     center_zone_coverage_multiplier: float = 0.60
     ego_path_width_ratio: float = 0.15

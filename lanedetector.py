@@ -79,7 +79,7 @@ class LaneDetector:
                 self.is_warning_active = False
 
         if self.is_warning_active and ego_speed_m_s >= min_speed_m_s:
-            audio_manager.play_beep(
+            audio_manager.play_lane_warning(
                 self.warning_freq_hz,
                 self.warning_duration_ms,
                 self.warning_cooldown_s

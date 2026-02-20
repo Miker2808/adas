@@ -5,13 +5,17 @@ from albumentations.pytorch import ToTensorV2
 import numpy as np
 import time
 import math
-from beamngpy import BeamNGpy, Scenario, Vehicle
 
 from object_detector.object_detector import ObjectDetector
 from object_detector.config_object_detector import DetectorConfig
 from segmentation.models.resnet_unet import RESNET18_UNET
 from lanedetector import LaneDetector
 from audio_manager import AudioManager
+from hud_display import ADASHUD
+
+USE_VIDEO_FILE = False
+VIDEO_FILE_PATH = "test_video.mp4"
+VIDEO_SIMULATED_SPEED_M_S = 20.0 
 
 BNG_HOME = r'E:\Games\BeamNG.drive'
 BNG_USER = r"C:\Users\miker\AppData\Local\BeamNG.drive\0.32"
@@ -67,41 +71,60 @@ class LaneSegmentationModel:
         
         return mask
 
-def init_camera():
-    cap = cv2.VideoCapture(CAMERA_ID, cv2.CAP_DSHOW)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-    if not cap.isOpened():
-        raise RuntimeError("Cannot open camera")
-    return cap
+def init_data_source():
+    if USE_VIDEO_FILE:
+        cap = cv2.VideoCapture(VIDEO_FILE_PATH)
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open video file: {VIDEO_FILE_PATH}")
+        return cap, None, None, None
+    else:
+        from beamngpy import BeamNGpy, Scenario, Vehicle
+        
+        cap = cv2.VideoCapture(CAMERA_ID, cv2.CAP_DSHOW)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
+        if not cap.isOpened():
+            raise RuntimeError("Cannot open camera")
 
-def start_simulation():
-    print("Connecting to BeamNG...")
-    bng = BeamNGpy(BNG_HOST, BNG_PORT, home=BNG_HOME, user=BNG_USER)
-    bng.open()
-    
-    scenario = Scenario(SCENARIO_MAP, SCENARIO_NAME)
-    vehicle = Vehicle('ego_vehicle', model=VEHICLE_MODEL)
-    scenario.add_vehicle(vehicle, pos=SPAWN_POS, rot_quat=SPAWN_ROT)
-    
-    scenario.make(bng)
-    bng.settings.set_deterministic(60)
-    bng.scenario.load(scenario)
-    vehicle.ai.set_mode('disabled')
+        print("Connecting to BeamNG...")
+        bng = BeamNGpy(BNG_HOST, BNG_PORT, home=BNG_HOME, user=BNG_USER)
+        bng.open()
+        
+        scenario = Scenario(SCENARIO_MAP, SCENARIO_NAME)
+        vehicle = Vehicle('ego_vehicle', model=VEHICLE_MODEL)
+        scenario.add_vehicle(vehicle, pos=SPAWN_POS, rot_quat=SPAWN_ROT)
+        
+        scenario.make(bng)
+        bng.settings.set_deterministic(60)
+        bng.scenario.load(scenario)
+        vehicle.ai.set_mode('disabled')
 
-    print("Spawning traffic...")
-    time.sleep(1.0)
-    bng.traffic.spawn(max_amount=5)
-    bng.scenario.start()
-    bng.pause()
+        print("Spawning traffic...")
+        time.sleep(1.0)
+        bng.traffic.spawn(max_amount=5)
+        bng.scenario.start()
+        bng.pause()
+        
+        return cap, bng, scenario, vehicle
 
-    return bng, scenario, vehicle
+def get_vehicle_state(cap, bng, scenario, vehicle):
+    if USE_VIDEO_FILE:
+        ret, frame = cap.read()
+        ego_speed_m_s = VIDEO_SIMULATED_SPEED_M_S
+        return ret, frame, ego_speed_m_s
+    else:
+        scenario.update()
+        vehicle.poll_sensors()
+        vel = vehicle.state['vel']
+        ego_speed_m_s = math.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
+        ret, frame = cap.read()
+        return ret, frame, ego_speed_m_s
 
 def main():
     try:
-        bng, scenario, vehicle = start_simulation()
+        cap, bng, scenario, vehicle = init_data_source()
     except Exception as e:
-        print(f"Failed to start simulation: {e}")
+        print(f"Failed to initialize data source: {e}")
         return
 
     seg_model = LaneSegmentationModel()
@@ -115,24 +138,22 @@ def main():
     cnfg = DetectorConfig()
     obj_detector = ObjectDetector(cnfg)
     audio_manager = AudioManager()
+    hud_display = ADASHUD(width=400, height=400)
 
-    cap = init_camera()
-    input("Press [Enter] to start ADAS system...")
-    bng.resume()
+    if not USE_VIDEO_FILE:
+        input("Press [Enter] to start ADAS system...")
+        bng.resume() # type: ignore
     
     prev_detection_time = 0
     detection_interval = 1.0 / LANE_DETECTION_RATE_HZ
     
-    print(f"System running. Press 'q' to exit.")
+    show_hud = True 
+    is_lane_warning = False
+    
+    print(f"System running. Press 'q' to exit, 'd' to toggle debug window, 'h' to toggle HUD.")
 
     while True:
-        scenario.update()
-        vehicle.poll_sensors()
-        
-        vel = vehicle.state['vel']
-        ego_speed_m_s = math.sqrt(vel[0]**2 + vel[1]**2 + vel[2]**2)
-        
-        ret, frame = cap.read()
+        ret, frame, ego_speed_m_s = get_vehicle_state(cap, bng, scenario, vehicle)
         if not ret: 
             break
 
@@ -141,13 +162,13 @@ def main():
         obj_alert_level, combined_frame = obj_detector.detect_track_and_alert(frame, ego_speed_m_s)
         
         if obj_alert_level == "hard":
-            audio_manager.play_beep(
+            audio_manager.play_hard_warning(
                 cnfg.audio_hard_warning_frequency_hz, 
                 cnfg.audio_hard_warning_duration_ms, 
                 cnfg.audio_hard_warning_cooldown_seconds
             )
         elif obj_alert_level == "soft":
-            audio_manager.play_beep(
+            audio_manager.play_soft_warning(
                 cnfg.audio_soft_warning_frequency_hz, 
                 cnfg.audio_soft_warning_duration_ms, 
                 cnfg.audio_soft_warning_cooldown_seconds
@@ -167,12 +188,13 @@ def main():
 
         combined_frame = detector.visualize_state(combined_frame)
         
-        cv2.putText(combined_frame, f"Ego Speed: {ego_speed_m_s * 3.6:.1f} km/h", (10, 80), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
         if combined_frame is not None:
             display_frame = cv2.resize(combined_frame, (1280, 720))
             cv2.imshow('ADAS Unified Window', display_frame)
+            
+        if show_hud:
+            hud_frame = hud_display.render(obj_alert_level, is_lane_warning, ego_speed_m_s * 3.6)
+            cv2.imshow('ADAS HUD', hud_frame)
 
         key = cv2.waitKey(1)
         if key == ord('q'):
@@ -180,10 +202,20 @@ def main():
         elif key == ord('p'):
             print("Paused. Press 'p' to unpause.")
             while cv2.waitKey(1) != ord('p'): pass
+        elif key == ord('d'):
+            cnfg.enable_debug_visualization = not cnfg.enable_debug_visualization
+        elif key == ord('h'):
+            show_hud = not show_hud
+            if not show_hud:
+                try:
+                    cv2.destroyWindow('ADAS HUD')
+                except cv2.error:
+                    pass
             
     cap.release()
     cv2.destroyAllWindows()
-    bng.close()
+    if not USE_VIDEO_FILE and bng:
+        bng.close()
 
 if __name__ == "__main__":
     main()
