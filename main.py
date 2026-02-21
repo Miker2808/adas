@@ -1,15 +1,11 @@
 import cv2
 import torch
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
-import numpy as np
 import time
 import math
 
 from object_detector.object_detector import ObjectDetector
 from object_detector.config_object_detector import DetectorConfig
-from segmentation.models.resnet_unet import RESNET18_UNET
-from lanedetector import LaneDetector
+from lanedetector import LaneDetector, LaneSegmentationModel
 from audio_manager import AudioManager
 from hud_display import ADASHUD
 
@@ -17,6 +13,7 @@ USE_VIDEO_FILE = False
 VIDEO_FILE_PATH = "test_video.mp4"
 VIDEO_SIMULATED_SPEED_M_S = 20.0 
 
+# BEAMNG
 BNG_HOME = r'E:\Games\BeamNG.drive'
 BNG_USER = r"C:\Users\miker\AppData\Local\BeamNG.drive\0.32"
 BNG_HOST = 'localhost'
@@ -31,45 +28,18 @@ SPAWN_ROT = (0.002, 0.004, 0.923, -0.386)
 CAMERA_ID = 0
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# LANE DETECTIOn
 CHECKPOINT_PATH = "segmentation/weights/residual_unet_weights.pth.tar"
 MODEL_INPUT_HEIGHT = 240
 MODEL_INPUT_WIDTH = 320
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
 LANE_DETECTION_RATE_HZ = 10.0 
 LANE_CONFIDENCE_THRESHOLD = 0.9
 LANE_DETECTION_ROI = (0.3, 0.8, 0.4, 0.20)
 
-class LaneSegmentationModel:
-    def __init__(self):
-        print(f"Loading Model on {DEVICE}...")
-        self.model = RESNET18_UNET(in_channels=3, out_channels=1).to(DEVICE)
-        checkpoint = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
-        self.model.load_state_dict(checkpoint["state_dict"])
-        self.model.eval()
-        
-        self.transform = A.Compose([
-            A.Resize(height=MODEL_INPUT_HEIGHT, width=MODEL_INPUT_WIDTH),
-            A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),
-            ToTensorV2()
-        ])
-    
-    def predict(self, frame):
-        original_height, original_width = frame.shape[:2]
-        
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        augmented = self.transform(image=frame_rgb)
-        img_tensor = augmented["image"].unsqueeze(0).to(DEVICE)
-        
-        with torch.no_grad():
-            pred = torch.sigmoid(self.model(img_tensor))
-            pred = (pred >= LANE_CONFIDENCE_THRESHOLD).float() 
-        
-        mask = pred.squeeze().cpu().numpy()
-        mask = cv2.resize(mask, (original_width, original_height))
-        mask = (mask * 255).astype(np.uint8)
-        
-        return mask
+
 
 def init_data_source():
     if USE_VIDEO_FILE:
@@ -127,7 +97,13 @@ def main():
         print(f"Failed to initialize data source: {e}")
         return
 
-    seg_model = LaneSegmentationModel()
+    seg_model = LaneSegmentationModel(
+        DEVICE,
+        CHECKPOINT_PATH,
+        MODEL_INPUT_HEIGHT,
+        MODEL_INPUT_WIDTH,
+        LANE_CONFIDENCE_THRESHOLD
+    )
     
     detector = LaneDetector(
         roi_rect=LANE_DETECTION_ROI,

@@ -1,6 +1,44 @@
 import cv2
 import numpy as np
+import torch
 from collections import deque
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+from segmentation.models.resnet_unet import RESNET18_UNET
+
+
+class LaneSegmentationModel:
+    def __init__(self, device, weights_path, input_height, input_width, confidence_threshold):
+        self.device = device
+        self.confidence_threshold = confidence_threshold
+        print(f"Loading Model on {self.device}...")
+        self.model = RESNET18_UNET(in_channels=3, out_channels=1).to(self.device)
+        checkpoint = torch.load(weights_path, map_location=self.device)
+        self.model.load_state_dict(checkpoint["state_dict"])
+        self.model.eval()
+        
+        self.transform = A.Compose([
+            A.Resize(height=input_height, width=input_width),
+            A.Normalize(mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), max_pixel_value=255.0),
+            ToTensorV2()
+        ])
+    
+    def predict(self, frame):
+        original_height, original_width = frame.shape[:2]
+        
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        augmented = self.transform(image=frame_rgb)
+        img_tensor = augmented["image"].unsqueeze(0).to(self.device)
+        
+        with torch.no_grad():
+            pred = torch.sigmoid(self.model(img_tensor))
+            pred = (pred >= self.confidence_threshold).float() 
+        
+        mask = pred.squeeze().cpu().numpy()
+        mask = cv2.resize(mask, (original_width, original_height))
+        mask = (mask * 255).astype(np.uint8)
+        
+        return mask
 
 class LaneDetector:
     def __init__(
